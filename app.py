@@ -136,10 +136,13 @@ h1 {
 # ---------------------
 #  LOAD DOCX KNOWLEDGE
 # ---------------------
-docx_path = r"C:\Users\jeevashreer\Downloads\GGS_Chatbot_150_QA.docx"
+uploaded_file = st.file_uploader("Upload your .docx file", type=["docx"])
+if uploaded_file is None:
+    st.warning("Please upload a .docx file to continue.")
+    st.stop()
 
-def extract_qa(path):
-    doc = Document(path)
+def extract_qa(file):
+    doc = Document(file)   # use uploaded file, NOT file path
     qa_pairs = []
     q, a = None, []
     for p in doc.paragraphs:
@@ -159,13 +162,13 @@ def extract_qa(path):
     return qa_pairs
 
 @st.cache_data
-def load_vectorized(docx_path):
-    qa = extract_qa(docx_path)
+def load_vectorized(file):
+    qa = extract_qa(file)
     vect = TfidfVectorizer()
     X = vect.fit_transform([q + " " + a for q, a in qa])
     return qa, vect, X
 
-qa_data, vectorizer, X = load_vectorized(docx_path)
+qa_data, vectorizer, X = load_vectorized(uploaded_file)
 answers = [a for _, a in qa_data]
 
 # ---------------------
