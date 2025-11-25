@@ -134,42 +134,51 @@ h1 {
 """, unsafe_allow_html=True)
 
 # ---------------------
-#  LOAD DOCX KNOWLEDGE
+#  LOAD DOCX KNOWLEDGE (BACKEND FILE)
 # ---------------------
-uploaded_file = st.file_uploader("Upload your .docx file", type=["docx"])
-if uploaded_file is None:
-    st.warning("Please upload a .docx file to continue.")
-    st.stop()
 
-def extract_qa(file):
-    doc = Document(file)   # use uploaded file, NOT file path
+# Name of the docx file inside your GitHub repo
+backend_docx_path = "GGS_Chatbot_150_QA.docx"
+
+def extract_qa(path):
+    doc = Document(path)   # read docx from repo
     qa_pairs = []
     q, a = None, []
+
     for p in doc.paragraphs:
         t = p.text.strip()
         if not t:
             continue
-        if t.lower().startswith("q"):
+
+        if t.lower().startswith("q"):  # New question
             if q and a:
                 qa_pairs.append((q, " ".join(a)))
             q, a = t, []
-        elif t.lower().startswith("a"):
+
+        elif t.lower().startswith("a"):  # Answer line
             a.append(t)
+
         elif q:
             a.append(t)
+
     if q and a:
         qa_pairs.append((q, " ".join(a)))
+
     return qa_pairs
 
+
 @st.cache_data
-def load_vectorized(file):
-    qa = extract_qa(file)
+def load_vectorized(path):
+    qa = extract_qa(path)
     vect = TfidfVectorizer()
     X = vect.fit_transform([q + " " + a for q, a in qa])
     return qa, vect, X
 
-qa_data, vectorizer, X = load_vectorized(uploaded_file)
+
+# Load backend docx file (NO user upload)
+qa_data, vectorizer, X = load_vectorized(backend_docx_path)
 answers = [a for _, a in qa_data]
+
 
 # ---------------------
 #     CHAT DISPLAY
