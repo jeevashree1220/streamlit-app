@@ -216,6 +216,35 @@ for msg in st.session_state.chat_history:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------------
+#  PRE-EXISTING FORMAL QUESTIONS
+# ---------------------
+st.markdown("### 📘 Quick General Questions")
+
+general_questions = [
+    "What services does GGS provide?",
+    "How can I contact GGS team?",
+    "What are the working hours?",
+]
+
+cols = st.columns(3)
+
+for i, q in enumerate(general_questions):
+    with cols[i % 3]:
+        if st.button(q, key=f"qbtn_{i}"):
+
+            # Use TF-IDF to find answer directly from DOCX
+            user_vec = vectorizer.transform([q])
+            sims = cosine_similarity(user_vec, X)
+            best_idx = np.argmax(sims)
+            score = sims[0][best_idx]
+
+            if score > 0.25:
+                answer = answers[best_idx]
+                st.success(f"**Answer:**\n\n{answer}")
+            else:
+                st.error("❌ Sorry, no matching answer found in the document.")
+
+# ---------------------
 #   FIXED CHAT INPUT
 # ---------------------
 if "chat_input" not in st.session_state:
