@@ -137,11 +137,10 @@ h1 {
 #  LOAD DOCX KNOWLEDGE (BACKEND FILE)
 # ---------------------
 
-# Name of the docx file inside your GitHub repo
-backend_docx_path = "GGS_Chatbot_150_QA.docx"
+backend_docx_path = r"C:\Users\jeevashreer\Downloads\GGS_Chatbot_150_QA.docx"
 
 def extract_qa(path):
-    doc = Document(path)   # read docx from repo
+    doc = Document(path)
     qa_pairs = []
     q, a = None, []
 
@@ -150,14 +149,15 @@ def extract_qa(path):
         if not t:
             continue
 
-        if t.lower().startswith("q"):  # New question
+        lower = t.lower()
+
+        # Detect questions (Q:, Q1., Q -, Q.)
+        if (lower.startswith("q") and (t[1:2].isdigit() or t[1:2] in ".:- ")) or lower.startswith("q:") or lower.startswith("q."):
             if q and a:
                 qa_pairs.append((q, " ".join(a)))
             q, a = t, []
-
-        elif t.lower().startswith("a"):  # Answer line
+        elif lower.startswith("a") or lower.startswith("a:") or lower.startswith("a."):
             a.append(t)
-
         elif q:
             a.append(t)
 
@@ -168,16 +168,25 @@ def extract_qa(path):
 
 
 @st.cache_data
-def load_vectorized(path):
+def load_vectorized(path, mtime):
     qa = extract_qa(path)
     vect = TfidfVectorizer()
     X = vect.fit_transform([q + " " + a for q, a in qa])
     return qa, vect, X
 
 
-# Load backend docx file (NO user upload)
-qa_data, vectorizer, X = load_vectorized(backend_docx_path)
+# Ensure file exists
+if not os.path.exists(backend_docx_path):
+    st.error(f"❌ Docx not found at: {backend_docx_path}")
+    st.stop()
+
+# Use file modification time to refresh cache when doc is updated
+mtime = os.path.getmtime(backend_docx_path)
+
+# Load QA data
+qa_data, vectorizer, X = load_vectorized(backend_docx_path, mtime)
 answers = [a for _, a in qa_data]
+
 
 
 # ---------------------
