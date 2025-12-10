@@ -140,7 +140,7 @@ h1 {
 #  LOAD DOCX KNOWLEDGE (BACKEND FILE)
 # ---------------------
 # Replace with the path to your docx file (existing)
-backend_docx_path = r"C:\Users\jeevashreer\Downloads\Chatbot_QAs.docx"
+backend_docx_path = "Chatbot_QAs.docx"
 
 def extract_qa(path):
     doc = Document(path)
