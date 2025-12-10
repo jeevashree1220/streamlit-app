@@ -6,9 +6,6 @@ from docx import Document
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
-import re
-import csv
-from datetime import datetime
 
 # ---------------------
 #        SETUP
@@ -139,8 +136,8 @@ h1 {
 # ---------------------
 #  LOAD DOCX KNOWLEDGE (BACKEND FILE)
 # ---------------------
-# Replace with the path to your docx file (existing)
-backend_docx_path = "Chatbot_QAs.docx"
+
+backend_docx_path = "C:\Users\jeevashreer\Downloads\Chatbot_QAs.docx"
 
 def extract_qa(path):
     doc = Document(path)
@@ -154,15 +151,12 @@ def extract_qa(path):
 
         lower = t.lower()
 
-        # Detect likely question lines (common patterns)
-        # We allow more flexible detection: lines ending with '?' or starting with 'q' tokens
-        if t.endswith("?") or (lower.startswith("q") and (len(t) > 1 and (t[1].isdigit() or t[1] in ".:- ")) ) or lower.startswith("q:") or lower.startswith("q."):
+        # Detect questions (Q:, Q1., Q -, Q.)
+        if (lower.startswith("q") and (t[1:2].isdigit() or t[1:2] in ".:- ")) or lower.startswith("q:") or lower.startswith("q."):
             if q and a:
                 qa_pairs.append((q, " ".join(a)))
-            q = t
-            a = []
-        elif lower.startswith("a:") or lower.startswith("a.") or (lower.startswith("answer") and ":" in lower):
-            # treat the rest of the line as answer start
+            q, a = t, []
+        elif lower.startswith("a") or lower.startswith("a:") or lower.startswith("a."):
             a.append(t)
         elif q:
             a.append(t)
@@ -172,13 +166,14 @@ def extract_qa(path):
 
     return qa_pairs
 
+
 @st.cache_data
 def load_vectorized(path, mtime):
     qa = extract_qa(path)
     vect = TfidfVectorizer()
-    texts = [ (q + " " + a) for q, a in qa ] or [""]
-    X = vect.fit_transform(texts)
+    X = vect.fit_transform([q + " " + a for q, a in qa])
     return qa, vect, X
+
 
 # Ensure file exists
 if not os.path.exists(backend_docx_path):
@@ -192,25 +187,7 @@ mtime = os.path.getmtime(backend_docx_path)
 qa_data, vectorizer, X = load_vectorized(backend_docx_path, mtime)
 answers = [a for _, a in qa_data]
 
-# Enquiry storage path
-ENQUIRIES_CSV = "/mnt/data/ggs_enquiries.csv"
 
-def save_enquiry(original_question, name, email, phone, raw_message):
-    header = ["timestamp","original_question","name","email","phone","raw_message"]
-    row = [datetime.utcnow().isoformat(), original_question, name, email, phone, raw_message]
-    os.makedirs(os.path.dirname(ENQUIRIES_CSV), exist_ok=True)
-    write_header = not os.path.exists(ENQUIRIES_CSV)
-    with open(ENQUIRIES_CSV, mode="a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if write_header:
-            writer.writerow(header)
-        writer.writerow(row)
-
-# Basic regex extractors
-email_re = re.compile(r"[\w\.-]+@[\w\.-]+\.\w+")
-phone_re = re.compile(r"((?:\+?\d{1,3}[-\s]?)?(?:\d{6,14}))")
-# A naive name extractor: first token(s) capitalized — this is a simple heuristic.
-name_re = re.compile(r"([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)")
 
 # ---------------------
 #     CHAT DISPLAY
@@ -220,14 +197,6 @@ if "chat_history" not in st.session_state:
         {"role": "assistant", "content": "Hi there! 👋 How can I help you today?"}
     ]
 
-# Flags to control enquiry flow
-if "awaiting_contact" not in st.session_state:
-    st.session_state.awaiting_contact = False
-if "pending_question" not in st.session_state:
-    st.session_state.pending_question = ""
-if "enquiries" not in st.session_state:
-    st.session_state.enquiries = []
-
 st.markdown("<h1> GGS Chatbot</h1>", unsafe_allow_html=True)
 st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
 
@@ -236,7 +205,7 @@ for msg in st.session_state.chat_history:
         st.markdown(
             f"""
             <div class="msg-user">
-                <div class="bubble-user">{st.session_state.get('escape_html',False) and st._utils.html.escape(msg['content']) or msg["content"]}</div>
+                <div class="bubble-user">{msg["content"]}</div>
                 <img src="https://cdn-icons-png.flaticon.com/512/9131/9131529.png" class="user-icon"/>
             </div>
             """,
@@ -247,7 +216,7 @@ for msg in st.session_state.chat_history:
             f"""
             <div class="msg-bot">
                 <img src="https://cdn-icons-png.flaticon.com/512/4712/4712027.png" class="bot-icon"/>
-                <div class="bubble-bot">{st.session_state.get('escape_html',False) and st._utils.html.escape(msg['content']) or msg["content"]}</div>
+                <div class="bubble-bot">{msg["content"]}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -262,131 +231,36 @@ st.markdown("</div>", unsafe_allow_html=True)
 if "chat_input" not in st.session_state:
     st.session_state.chat_input = ""
 
-def try_extract_contact(text):
-    """
-    Try find email, phone and name heuristically from a text blob.
-    Returns (name, email, phone) or (None, None, None) if not found.
-    """
-    email_match = email_re.search(text)
-    phone_match = phone_re.search(text)
-    name_match = None
-
-    # Try simple approach:
-    # If user types "Name: John Doe, Email: x, Phone: y" it will pick up easily
-    # else we try to find capitalized tokens near email/phone
-    if "name" in text.lower():
-        nm = re.search(r"name[:\-]\s*([A-Za-z\s]{2,50})", text, flags=re.IGNORECASE)
-        if nm:
-            name_match = nm.group(1).strip()
-
-    if not name_match:
-        # fallback to first reasonable capitalized pair
-        nm = name_re.search(text)
-        if nm:
-            name_match = nm.group(1).strip()
-
-    email = email_match.group(0) if email_match else None
-    phone = phone_match.group(1) if phone_match else None
-    name = name_match if name_match else None
-
-    return name, email, phone
-
 def send_message():
     user_input = st.session_state.chat_input.strip()
-    if not user_input:
-        return
-
-    # Save user message to history
-    st.session_state.chat_history.append({"role": "user", "content": user_input})
-
-    # If we are currently awaiting contact details for a previous unknown question
-    if st.session_state.awaiting_contact:
-        # Try to parse the provided message for contact info
-        name, email, phone = try_extract_contact(user_input)
-
-        if name and email and phone:
-            # save enquiry
-            save_enquiry(st.session_state.pending_question, name, email, phone, user_input)
-            st.session_state.enquiries.append({
-                "question": st.session_state.pending_question,
-                "name": name,
-                "email": email,
-                "phone": phone,
-                "raw": user_input,
-                "ts": datetime.utcnow().isoformat()
-            })
-            st.session_state.chat_history.append({
-                "role": "assistant",
-                "content": f"Thanks {name}! 🎉 We've recorded your enquiry. Our team will reach out to {email} / {phone} shortly."
-            })
-            # clear awaiting state
-            st.session_state.awaiting_contact = False
-            st.session_state.pending_question = ""
-            st.session_state.chat_input = ""
-            return
-        else:
-            # If parsing failed, ask explicitly for missing pieces
-            missing = []
-            if not name:
-                missing.append("name")
-            if not email:
-                missing.append("email address")
-            if not phone:
-                missing.append("contact number")
-            missing_text = ", ".join(missing)
-            st.session_state.chat_history.append({
-                "role": "assistant",
-                "content": f"I couldn't detect your {missing_text}. Please provide your Name, Email, and Contact number (e.g. John Doe, john@example.com, +919876543210)."
-            })
-            st.session_state.chat_input = ""
-            return
-
-    # ---- Find relevant context ----
-    user_vec = vectorizer.transform([user_input])
-    sims = cosine_similarity(user_vec, X)
-    best_idx = int(np.argmax(sims))
-    score = float(sims[0][best_idx])
-    context = answers[best_idx] if score > 0.25 and len(answers)>0 else ""
-
-    # If no matching answer is found, start enquiry capture flow
-    if not context:
-        st.session_state.pending_question = user_input
-        st.session_state.awaiting_contact = True
-        st.session_state.chat_history.append({
-            "role": "assistant",
-            "content": (
-                "I don't have a direct answer in my knowledge base for that. "
-                "If you'd like, our enquiries team can assist you further — please provide your **Name**, **Email**, and **Contact Number** "
-                "so they can reach out. Example format: `John Doe, john@example.com, +919876543210`"
-            )
-        })
-        st.session_state.chat_input = ""
-        return
-
-    # ---- Prepare messages for model ----
-    messages = [{"role": "system", "content": "You are GGS Smart Chatbot, helpful and concise."}]
-    for m in st.session_state.chat_history[-10:]:
-        messages.append({"role": m["role"], "content": m["content"]})
-    if context:
-        messages.append({"role": "system", "content": f"Company context: {context}"})
-
-    # ---- Generate reply using OpenAI ----
-    with st.spinner("🤖 Bot is typing..."):
-        try:
+    if user_input:
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        # ---- Find relevant context ----
+        user_vec = vectorizer.transform([user_input])
+        sims = cosine_similarity(user_vec, X)
+        best_idx = np.argmax(sims)
+        score = sims[0][best_idx]
+        context = answers[best_idx] if score > 0.25 else ""
+        # ---- Prepare messages for model ----
+        messages = [{"role": "system", "content": "You are GGS Smart Chatbot, helpful and concise."}]
+        for m in st.session_state.chat_history[-10:]:
+            messages.append({"role": m["role"], "content": m["content"]})
+        if context:
+            messages.append({"role": "system", "content": f"Company context: {context}"})
+        # ---- Generate reply ----
+        with st.spinner("🤖 Bot is typing..."):
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=messages,
                 temperature=0.4,
             )
             reply = response.choices[0].message.content.strip()
-        except Exception as e:
-            reply = "Sorry — I'm having trouble reaching the model right now. Please try again later."
-
-    st.session_state.chat_history.append({"role": "assistant", "content": reply})
-    st.session_state.chat_input = ""
+        st.session_state.chat_history.append({"role": "assistant", "content": reply})
+        st.session_state.chat_input = ""
 
 # open the input-area div
 st.markdown("<div class='input-area'>", unsafe_allow_html=True)
+
 
 col1, col2 = st.columns([12, 1], gap="small")
 with col1:
